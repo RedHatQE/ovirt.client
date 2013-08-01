@@ -1,6 +1,7 @@
 (defproject ovirt.client "0.1.0-SNAPSHOT"
   :description "A clojure client for ovirt and rhevm"
-  :url "http://example.com/FIXME"
+  :url "https://github.com/RedHatQE/ovirt.client"
+  :main ovirt.client
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :dependencies [[org.clojure/clojure "1.5.1"]

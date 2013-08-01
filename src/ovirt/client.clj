@@ -9,7 +9,7 @@
 
 (def ^:dynamic *action-timeout* 600000)
 
-(defrecord InstanceDefinition [name template-name memory])
+(defrecord InstanceDefinition [name template-name memory sockets cores])
 
 (defmacro loop-with-timeout
   "Similar to clojure.core/loop, but adds a timeout to break out of
@@ -53,11 +53,17 @@
 
 (defn create [api instance-def cluster-name]
   (let [cluster (-> api .getClusters (.get cluster-name))
+        template (-> api .getTemplates (.get (:template-name instance-def)))
+        topo (doto (-> template .getCpu .getTopology)
+               (.setSockets (-> instance-def :sockets int))
+               (.setCores (-> instance-def :cores int)))
         vm (doto (VM.)
              (.setName (:name instance-def))
-             (.setTemplate (-> api .getTemplates (.get (:template-name instance-def))))
+             (.setTemplate template)
              (.setCluster cluster)
-             (.setMemory (:memory instance-def)))]
+             (.setMemory (:memory instance-def))
+             (.setCpu (doto (.getCpu template)
+                        (.setTopology topo))))]
     (-> api .getVMs (.add vm))))
 
 
@@ -69,9 +75,11 @@
     (wait-for vm up? 240000)))
 
 (defn stop [vm]
-  (let [action (doto (Action.) (.setVm (VM.)))]
-    (.stop vm action)
-    (wait-for vm down? 240000)))
+  (if (not (down? vm))
+    (let [action (doto (Action.) (.setVm (VM.)))]
+      (.stop vm action)
+      (wait-for vm down? 240000))
+    vm))
 
 (defn delete [vm]
   (.delete vm))
@@ -83,28 +91,32 @@
 
 (def provision (comp start create))
 (def unprovision (comp delete stop))
+(def parseLong #(Long/parseLong %))
 
 (def argspec
-  [
-   ["-r" "--ovirt-url" "The URL for ovirt server api - be sure to always include port, even if 80 or 443"]
+  [["-r" "--ovirt-url" "The URL for ovirt server api - be sure to always include port, even if 80 or 443"]
    ["-u" "--username" "ovirt username"]
    ["-p" "--password" "ovirt password"]
    ["-c" "--cluster" "Name of the cluster to start the vm in"]
    ["-n" "--name" "Name of the vm to create (will destroy existing if already exists)"]
    ["-t" "--template" "Name of the template to use to create the vm"]
-   ["-m" "--memory" "Amount of RAM (in MB) to give the vm" :parse-fn #(-> % Long/parseLong) :default 512]
-   ["-o" "--output-file" "File to write the IP address of the newly created vm to"]])
+   ["-m" "--memory" "Amount of RAM (in MB) to give the vm" :parse-fn parseLong :default 512]
+   ["-o" "--output-file" "File to write the IP address of the newly created vm to"]
+   ["--sockets" "Number of CPU sockets for the vm" :parse-fn parseLong :default 4]
+   ["--cores" "Number of CPU cores per socket for the vm" :parse-fn parseLong :default 1]])
 
 (defn -main [& args]
-  (let [[{:keys [ovirt-url username password cluster name template memory output-file]}
+  (let [[{:keys [ovirt-url username password cluster name
+                 template memory output-file sockets cores]}
          _ docstring] (apply cli/cli args argspec)]
-    (if (not (every? identity [ovirt-url username password cluster name template memory]))
+    (if (not (every? identity [ovirt-url username password cluster name template memory sockets cores]))
       (println docstring)
       (let [api (connect ovirt-url username password)
-            vm (get-by-name api name)]
+            vm (get-by-name api name)
+            instance-def (->InstanceDefinition name template (* memory 1024 1024) sockets cores)]
         (try (when vm
                (unprovision vm))
-             (let [vm (provision api (InstanceDefinition. name template (* memory 1024 1024)) cluster)]
+             (let [vm (provision api instance-def cluster)]
                (spit (or output-file (format "ovirt-instance-address-%s.txt" name))
                      (ip-address vm)))
              (finally (.shutdown api)))))))
