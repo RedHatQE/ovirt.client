@@ -1,5 +1,6 @@
 (ns ovirt.client
-  (:require [clojure.tools.cli :as cli])
+  (:require [clojure.tools.cli :as cli]
+            [slingshot.slingshot :refer [try+ throw+]])
   (:import [org.ovirt.engine.sdk Api]
            [org.ovirt.engine.sdk.entities VM Action]))
 
@@ -8,6 +9,7 @@
       (com.redhat.qe.tools.SSLCertificateTruster/trustAllCertsForApacheXMLRPC)))
 
 (def ^:dynamic *action-timeout* 600000)
+(def ^:dynamic *kill-instance-when-finished* true)
 
 (defrecord InstanceDefinition [name template-name memory sockets cores])
 
@@ -51,7 +53,7 @@
 (defn get-by-name [api name]
   (-> api .getVMs (.get name)))
 
-(defn create [api instance-def cluster-name]
+(defn create [api cluster-name instance-def]
   (let [cluster (-> api .getClusters (.get cluster-name))
         template (-> api .getTemplates (.get (:template-name instance-def)))
         topo (doto (-> template .getCpu .getTopology)
@@ -88,9 +90,34 @@
   [vm]
   (-> vm .getGuestInfo .getIps .getIPs first .getAddress))
 
-
 (def provision (comp start create))
 (def unprovision (comp delete stop))
+
+(defn provision-all
+  "Provision vms with given properties (a list of InstanceDefinition),
+   in parallel. Returns a list of VM objects from ovirt."
+  [api cluster-name instance-defs]
+  (let [provision (partial provision api cluster-name)]
+    (->> (for [instance-def instance-defs]
+           (future (provision instance-def)))
+         doall
+         (map deref))))
+
+(defn unprovision-all
+  "Destroy all the given vms, in parallel."
+  [vms]
+  (let [results (for [f (doall (for [i vms]
+                                 (future (unprovision i))))]
+                  (try+ (deref f *action-timeout* {:type ::unprovision-timed-out}) 
+                        (catch [:type ::unprovision-failed] e e)))
+        grouped (group-by :type results)]
+    (if (or (seq (::unprovision-timed-out grouped))
+            (seq (::unprovision-failed grouped)))
+      (throw+ {:type ::some-unprovisisons-failed
+               :results grouped})
+      results)))
+
+
 (def parseLong #(Long/parseLong %))
 
 (def argspec
@@ -116,7 +143,7 @@
             instance-def (->InstanceDefinition name template (* memory 1024 1024) sockets cores)]
         (try (when vm
                (unprovision vm))
-             (let [vm (provision api instance-def cluster)]
+             (let [vm (provision api cluster instance-def)]
                (spit (or output-file (format "ovirt-instance-address-%s.txt" name))
                      (ip-address vm)))
              (finally (.shutdown api)))))))
