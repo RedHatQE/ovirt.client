@@ -108,15 +108,16 @@
   [vms]
   (let [results (for [f (doall (for [i vms]
                                  (future (unprovision i))))]
-                  (try+ (deref f *action-timeout* {:type ::unprovision-timed-out}) 
-                        (catch [:type ::unprovision-failed] e e)))
+                  (try+ (deref f *action-timeout* {:type ::unprovision-timed-out
+                                                   :timeout *action-timeout*}) 
+                        (catch Object o {:type ::unprovision-failed
+                                         :error o})))
         grouped (group-by :type results)]
     (if (or (seq (::unprovision-timed-out grouped))
             (seq (::unprovision-failed grouped)))
       (throw+ {:type ::some-unprovisisons-failed
                :results grouped})
       results)))
-
 
 (def parseLong #(Long/parseLong %))
 
