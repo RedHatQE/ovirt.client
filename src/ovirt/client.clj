@@ -48,7 +48,7 @@
 (def down? (partial is-state? "down"))
 
 (defn connect [url user password]
-  (Api. url user password))
+  (Api. url user password true))
 
 (defn get-by-name [api name]
   (-> api .getVMs (.get name)))
