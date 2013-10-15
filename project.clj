@@ -1,8 +1,8 @@
-(defproject com.redhat.qe/ovirt.client "0.1.0-SNAPSHOT"
+(defproject org.clojars.blrm/ovirt.client "0.1.4-SNAPSHOT"
   :description "A clojure client for ovirt and rhevm"
   :url "https://github.com/RedHatQE/ovirt.client"
   :scm {:name "git"
-        :url "https://github.com/RedHatQE/ovirt.client"}
+        :url "https://github.com/blrm/ovirt.client"}
   :main ovirt.client
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
